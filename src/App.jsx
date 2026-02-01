@@ -161,14 +161,68 @@ const Navbar = ({ theme, toggleTheme }) => {
 
 const NeuralBackground = ({ theme }) => {
   const containerRef = useRef(null);
+  const animationFrameIdRef = useRef(null);
+  const rendererRef = useRef(null);
+  const sceneRef = useRef(null);
+  const cameraRef = useRef(null);
+  const handleMouseMoveRef = useRef(null);
+  const handleResizeRef = useRef(null);
   const isDark = theme === 'dark';
+  
   useEffect(() => {
-    const script = document.createElement('script');
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
-    script.async = true;
-    document.body.appendChild(script);
-    script.onload = () => {
-      if (!containerRef.current) return;
+    let script = null;
+    let isMounted = true;
+    
+    const cleanup = () => {
+      isMounted = false;
+      
+      // Cancel animation frame
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+        animationFrameIdRef.current = null;
+      }
+      
+      // Remove event listeners
+      if (handleMouseMoveRef.current) {
+        window.removeEventListener('mousemove', handleMouseMoveRef.current);
+        handleMouseMoveRef.current = null;
+      }
+      if (handleResizeRef.current) {
+        window.removeEventListener('resize', handleResizeRef.current);
+        handleResizeRef.current = null;
+      }
+      
+      // Clean up Three.js resources
+      if (rendererRef.current) {
+        if (containerRef.current && rendererRef.current.domElement) {
+          try {
+            containerRef.current.removeChild(rendererRef.current.domElement);
+          } catch (e) {
+            // Element might already be removed
+          }
+        }
+        rendererRef.current.dispose();
+        rendererRef.current = null;
+      }
+      
+      if (sceneRef.current) {
+        sceneRef.current.clear();
+        sceneRef.current = null;
+      }
+      
+      // Remove script only if it was added by this component
+      if (script && script.parentNode) {
+        try {
+          script.parentNode.removeChild(script);
+        } catch (e) {
+          // Script might already be removed
+        }
+      }
+    };
+    
+    const initializeThree = () => {
+      if (!containerRef.current || !window.THREE || !isMounted) return;
+      
       const THREE = window.THREE;
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -176,9 +230,15 @@ const NeuralBackground = ({ theme }) => {
       const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(width, height);
-      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
       containerRef.current.appendChild(renderer.domElement);
-      const particlesCount = 120;
+      
+      // Store refs for cleanup
+      rendererRef.current = renderer;
+      sceneRef.current = scene;
+      cameraRef.current = camera;
+      
+      const particlesCount = 80; // Reduced from 120 for better performance
       const positions = new Float32Array(particlesCount * 3);
       const velocities = [];
       for (let i = 0; i < particlesCount; i++) {
@@ -196,10 +256,19 @@ const NeuralBackground = ({ theme }) => {
       let lineMesh;
       camera.position.z = 5;
       let mouseX = 0, mouseY = 0;
-      const handleMouseMove = (e) => { mouseX = (e.clientX / window.innerWidth - 0.5) * 2; mouseY = (e.clientY / window.innerHeight - 0.5) * 2; };
-      window.addEventListener('mousemove', handleMouseMove);
+      
+      handleMouseMoveRef.current = (e) => { 
+        mouseX = (e.clientX / window.innerWidth - 0.5) * 2; 
+        mouseY = (e.clientY / window.innerHeight - 0.5) * 2; 
+      };
+      window.addEventListener('mousemove', handleMouseMoveRef.current);
+      
       const animate = () => {
-        requestAnimationFrame(animate);
+        if (!isMounted || !containerRef.current) {
+          return; // Stop if component unmounted
+        }
+        
+        animationFrameIdRef.current = requestAnimationFrame(animate);
         const posAttr = geometry.attributes.position;
         const linePositions = [];
         for (let i = 0; i < particlesCount; i++) {
@@ -231,11 +300,50 @@ const NeuralBackground = ({ theme }) => {
         renderer.render(scene, camera);
       };
       animate();
-      const handleResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
-      window.addEventListener('resize', handleResize);
-      return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('resize', handleResize); if (containerRef.current && renderer.domElement) { containerRef.current.removeChild(renderer.domElement); } };
+      
+      handleResizeRef.current = () => { 
+        if (!cameraRef.current || !rendererRef.current || !isMounted) return;
+        cameraRef.current.aspect = window.innerWidth / window.innerHeight; 
+        cameraRef.current.updateProjectionMatrix(); 
+        rendererRef.current.setSize(window.innerWidth, window.innerHeight); 
+      };
+      window.addEventListener('resize', handleResizeRef.current);
     };
-    return () => { document.body.removeChild(script); };
+    
+    // Check if Three.js is already loaded
+    if (window.THREE) {
+      initializeThree();
+      return cleanup;
+    }
+    
+    // Check if script is already being loaded
+    const existingScript = document.querySelector('script[src*="three.js"]');
+    if (existingScript) {
+      const onLoad = () => {
+        if (isMounted) initializeThree();
+        existingScript.removeEventListener('load', onLoad);
+      };
+      existingScript.addEventListener('load', onLoad);
+      if (window.THREE) {
+        initializeThree();
+      }
+      return cleanup;
+    }
+    
+    script = document.createElement('script');
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    
+    script.onload = initializeThree;
+    script.onerror = () => {
+      console.error('Failed to load Three.js - background animation disabled');
+      // Continue without the background animation
+    };
+    
+    document.body.appendChild(script);
+    
+    return cleanup;
   }, [isDark]);
   return (
     <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
@@ -1202,9 +1310,15 @@ export default function App() {
         }
       });
     }, { threshold: 0.1 });
-    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
-    return () => observer.disconnect();
-  }, [theme]);
+    
+    const elements = document.querySelectorAll('.reveal');
+    elements.forEach(el => observer.observe(el));
+    
+    return () => {
+      elements.forEach(el => observer.unobserve(el));
+      observer.disconnect();
+    };
+  }, []); // Remove 'theme' from dependencies - observer doesn't need to re-run on theme change
 
   return (
     <div className={`min-h-screen transition-colors duration-500 selection:bg-indigo-500/30 font-sans scroll-smooth ${isDark ? 'bg-slate-950 text-slate-200' : 'bg-white text-slate-900'}`}>
