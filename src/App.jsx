@@ -136,7 +136,7 @@ const Navbar = ({ theme, toggleTheme }) => {
             {isDark ? <Sun size={18} className="text-yellow-400" /> : <Moon size={18} className="text-indigo-600" />}
           </button>
           <a 
-            href="Darthi Resume updated.pdf" 
+            href="/resume.pdf" 
             download="Darthi Resume updated.pdf"
             className={`flex items-center gap-2 px-4 md:px-5 py-2 rounded-full text-sm font-semibold transition-all shadow-lg border ${
               isDark 
